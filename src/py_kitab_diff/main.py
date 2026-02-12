@@ -1,6 +1,6 @@
 """
 A Python implementation of the javascript KITAB diff code,
-used in the OpenITI diffViewer.
+used in the KITAB/OpenITI diffViewer (https://kitab-project.org/diffViewer).
 It is based on (the Python implementation of) WikEdDiff.
 
 TO DO:
@@ -12,14 +12,18 @@ TO DO:
 import WikEdDiff  
 import difflib
 import re
+import os
 import json
+import webbrowser
+import tempfile
 
+# define how many characters each fragment type should minimally contain:
 MIN_TAG_CHARS = {
-    "+": 1,
-    "-": 1,
-    "=": 4,
-    ">": 4,
-    "<": 4
+    "+": 1,   # INSERTION
+    "-": 1,   # DELETION
+    "=": 3,   # COMMON
+    ">": 3,   # MOVED (forward)
+    "<": 3    # MOVED (backward)
     }
 
 
@@ -235,7 +239,7 @@ def split_lines(text_a, text_b, a_offsets, b_offsets, min_line_length=20, line_t
         b_dict["end"] += n_lines * len(line_tag)
         new_text_b += b_dict["text"]
     
-    print("Added", n_lines, "lines")
+    print("Divided the diff into", n_lines, "lines to improve readability")
     return new_text_a, new_text_b, a_offsets, b_offsets
         
         
@@ -446,6 +450,8 @@ def parse_wikEdDiff(fragments, include_text=True, debug=False):
       - type: symbol for common text (=), deletion (-), insertion (+), moved text (< or >) 
       - moved_id: numeric ID that allows to identify pairs of moved fragments.
             defaults to 0 for non-moved fragments. (same number as fragment.color)
+      - common_id: numeric ID that allows to identify pairs of common fragments.
+            defaults to 0 for inserted, deleted or moved fragments.
 
     Args:
         fragments (Obj): a WikEdDiff output object
@@ -492,7 +498,7 @@ def parse_wikEdDiff(fragments, include_text=True, debug=False):
 
     return a_offsets, b_offsets
             
-def offsets2html(a_offsets, b_offsets, highlight_common=False, outfp="test_diff.html"):
+def offsets2html(a_offsets, b_offsets, highlight_common=False, outfp=None):
     """Create a html representation of the diff
 
     Args:
@@ -558,6 +564,15 @@ def offsets2html(a_offsets, b_offsets, highlight_common=False, outfp="test_diff.
     if outfp:
         with open(outfp, mode="w", encoding="utf-8") as file:
             file.write(template % (cells[0], cells[1]))
+            path = file.name
+        print("html version of the diff saved here:", outfp)
+        webbrowser.open(outfp)
+    else:
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False, \
+                mode="w",encoding="utf-8") as f:
+            f.write(template % (cells[0], cells[1]))
+            path = f.name
+        webbrowser.open(f"file://{path}")
 
     return cells
             
@@ -593,6 +608,7 @@ def simplify_diff(offsets, min_tag_chars):
     give it the same type as the previous or next one
     (whichever is the longest)."""
 
+##    # TODO:
 ##    # STEP 1: merge neighbouring tags of the same type:
 ##    prev_text = ""
 ##    prev_type = None
@@ -646,24 +662,24 @@ def simplify_diff(offsets, min_tag_chars):
                 next_text = ""
             if len(next_text) > len(prev_text):
                 d["type"] = next_type
-                print("changing type of", [f_text], "from", f_type, "to", next_type, f"({len(next_text)} > {len(prev_text)})")
+                #print("changing type of", [f_text], "from", f_type, "to", next_type, f"({len(next_text)} > {len(prev_text)})")
                 f_type = next_type
             else:
                 d["type"] = prev_type
-                print("changing type of", [f_text], "from", f_type, "to", prev_type, f"({len(next_text)} <= {len(prev_text)})")
+                #print("changing type of", [f_text], "from", f_type, "to", prev_type, f"({len(next_text)} <= {len(prev_text)})")
                 f_type = prev_type
         prev_text = f_text
         prev_type = f_type
 
     return offsets
 
-def main(a, b, config=None, debug=False, 
-         normalize_alif=True, normalize_ya=True,
-         normalize_ha=True, remove_punctuation=True, replace_d={},
-         include_text=True, min_line_length=float("inf"),
-         output_html=False, html_outfp="test_diff.html",
-         highlight_common=False, json_outfp="diff.json",
-         offset_format="list_of_dictionaries", min_tag_chars=MIN_TAG_CHARS):
+def kitab_diff(a, b, config=None, debug=False, 
+               normalize_alif=True, normalize_ya=True,
+               normalize_ha=True, remove_punctuation=True, replace_d={},
+               include_text=True, min_line_length=float("inf"),
+               output_html=False, html_outfp=None,
+               highlight_common=False, json_outfp=None,
+               offset_format="list_of_dictionaries", min_tag_chars=MIN_TAG_CHARS):
     """Calculate the diff between two input texts
     (based on the wikEdDiff algorithm and refined using the Heckel algorithm)
     Args:
@@ -672,10 +688,12 @@ def main(a, b, config=None, debug=False,
         config (Obj): WikEdDiff.WikEdDiffConfig() object,
             configuration options for WikEdDiff. Defaults to None (default config)
         debug (bool): print debugging info. Defaults to False.
-        normalize_alif (bool): normalize alif+madda/wasla/hamza to simple alif
-        normalize_ya (bool): normalize Persian ya and alif maqsura to Arabic ya
-        normalize_ha (bool): normalize ta marbuta to ha
-        remove_punctuation (bool): remove punctuation
+        normalize_alif (bool): normalize alif+madda/wasla/hamza to simple alif.
+            Defaults to True
+        normalize_ya (bool): normalize Persian ya and alif maqsura to Arabic ya.
+            Defaults to True
+        normalize_ha (bool): normalize ta marbuta to ha. Defaults to True
+        remove_punctuation (bool): remove punctuation. Defaults to True
         replace_d (dict): custom replacements: replace key by value.
             Defaults to empty dict (no custom replacements)
         include_text (bool): include the text of the fragment in the offset dictionaries        
@@ -683,7 +701,8 @@ def main(a, b, config=None, debug=False,
             with a minimum number of characters, for easier comparison of texts.
             Defaults to `float("inf")`: do not split into rows.
         output_html (bool): if True, a html representation of the diff will be generated
-        html_outfp (str): path to the output html file
+        html_outfp (str): path to the output html file. Defaults to None
+            (a temporary file will open)
         highlight_common (bool): if False, deletions and insertions (and moved text)
             will be highlighed in the html; if True, common (and moved) text is highlighted.
         offset_format (str): one of "list_of_dictionaries", "list_of_tuples", "dict_of_offsets"
@@ -769,7 +788,6 @@ def main(a, b, config=None, debug=False,
 
     # generate a quick test html:
     if output_html:
-        print("html version of the diff saved here:", html_outfp)
         a_html, b_html = offsets2html(a_offsets, b_offsets, outfp=html_outfp,
                                       highlight_common=highlight_common)
 
@@ -788,9 +806,9 @@ def main(a, b, config=None, debug=False,
         output_d["html_b"] = b_html
 
     if json_outfp:
-        print("json version of the diff saved here:", json_outfp)
         with open(json_outfp, mode="w", encoding="utf-8") as file:
             json.dump(output_d, file, indent=2, ensure_ascii=False)
+        print("json version of the diff saved here:", json_outfp)
 
     print("Done!")
     
@@ -801,15 +819,14 @@ def main(a, b, config=None, debug=False,
     
     
 if __name__ == "__main__":
-    r = main(input_a, input_b, config=None, debug=True, 
-             normalize_alif=True, normalize_ya=True,
-             normalize_ha=True, remove_punctuation=True, replace_d={},
-             include_text=True, min_line_length=30,
-             output_html=True, html_outfp="test_diff.html",
-             highlight_common=False, json_outfp="diff.json",
-             offset_format="dict_of_offsets", min_tag_chars=MIN_TAG_CHARS)
+    r = kitab_diff(input_a, input_b, config=None, debug=False, 
+                   normalize_alif=True, normalize_ya=True,
+                   normalize_ha=True, remove_punctuation=True, replace_d={},
+                   include_text=True, min_line_length=30,
+                   output_html=True, html_outfp="test.html",
+                   highlight_common=False, json_outfp=None,
+                   offset_format="dict_of_offsets", min_tag_chars=MIN_TAG_CHARS)
     try:
         a, b, a_offsets, b_offsets, a_html, b_html = r
     except:
         a, b, a_offsets, b_offsets = r
-    print(a_offsets)
