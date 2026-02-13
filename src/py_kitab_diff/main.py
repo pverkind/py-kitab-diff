@@ -74,8 +74,8 @@ input_b = """# (15)
 ~~أنه يخرج من مفاوز وراء أرض الزنج لا تسلك حتى ينتهى الى حد الزنج ويقطع فى
 ~~متصلة مفاوز النوبة وعماراتهم فيجرى لهم فى عمارات الى أن يقع فى أرض مصر،"""
 
-#input_a = "This is the start. I have moved this sentence. Sime tipos! This is the end."
-#input_b = "I have moved this sentence. This was the start. Some typos! Addition... This is the end."
+input_a = "This is the start. I have moved this sentence. Sime tipos! This is the end."
+input_b = "I have moved this sentence. This was the start. Some typos! Addition... This is the end."
 
 def preprocess(text, normalize_alif=True, normalize_ya=True,
                normalize_ha=True, remove_punctuation=True, replace_d={}):
@@ -711,6 +711,7 @@ def kitab_diff(a, b, config=None, debug=False,
             if set to more than one, sequences of characters
             identified as this tag that are below this minimum
             will not be marked as this tag but given the same type as the next or previous tag.
+            Defaults to:  {"+": 1, "-": 1, "=": 3, ">": 3, "<": 3}
 
    Returns:
        tup
