@@ -4,8 +4,10 @@ used in the KITAB/OpenITI diffViewer (https://kitab-project.org/diffViewer).
 It is based on (the Python implementation of) WikEdDiff.
 
 TO DO:
+- additional refinement: after first refinement, check each of the
+  remaining deleted/added fragments to see if there is 
 - simplify diff by merging neighbouring fragments of same type
-- tests
+- more tests
 """
 
 #!pip install git+https://github.com/lahwaacz/python-wikeddiff.git
@@ -74,8 +76,8 @@ input_b = """# (15)
 ~~أنه يخرج من مفاوز وراء أرض الزنج لا تسلك حتى ينتهى الى حد الزنج ويقطع فى
 ~~متصلة مفاوز النوبة وعماراتهم فيجرى لهم فى عمارات الى أن يقع فى أرض مصر،"""
 
-input_a = "This is the start. I have moved this sentence. Sime tipos! This is the end."
-input_b = "I have moved this sentence. This was the start. Some typos! Addition... This is the end."
+#input_a = "This is the start. I have moved this sentence. Sime tipos! This is the end."
+#input_b = "I have moved this sentence. This was the start. Some typos! Addition... This is the end."
 
 def preprocess(text, normalize_alif=True, normalize_ya=True,
                normalize_ha=True, remove_punctuation=True, replace_d={}):
@@ -130,7 +132,8 @@ def preprocess(text, normalize_alif=True, normalize_ya=True,
 
     return text
 
-def add_offset(f_id, f_text, offsets, last_offset, f_type, f_color=0, common_id=0, include_text=True):
+def add_offset(f_id, f_text, offsets, last_offset, f_type,
+               f_color=0, common_id=0, include_text=True):
     """Add the start and end offsets of the current fragment to the offsets list.
 
     Args:
@@ -143,8 +146,11 @@ def add_offset(f_id, f_text, offsets, last_offset, f_type, f_color=0, common_id=
         f_color (int): numerical value for the backgroundcolor
             to be given to the fragment. Always 0 except for moved fragment pairs,
             which each have their own color => f_color can be used as an ID
-            for the fragment pairs.
-        include_text (bool): if True, the text of the fragment will be included in the output
+            for the fragment pairs. Defaults to 0
+        common_id (int): ID for pairs of fragments common to both texts.
+            Defaults to 0 (for additions, deletions and moved text)
+        include_text (bool): if True, the text of the fragment
+            will be included in the output. Defaults to True
 
     Returns:
         int (offset of the end of the current fragment)
@@ -167,16 +173,22 @@ def add_offset(f_id, f_text, offsets, last_offset, f_type, f_color=0, common_id=
 
     return end
 
-def split_lines(text_a, text_b, a_offsets, b_offsets, min_line_length=20, line_tag="<br/>"):
-    """Add line markers in both texts to make the diffs more readable.
-
-    The function inserts line markers in 
+def split_lines(text_a, text_b, a_offsets, b_offsets,
+                min_line_length=20, line_tag="<br/>"):
+    """Add line markers in both diffs to make easier to read.
 
     Args:
         text_a (str): the first input text
         text_b (str): the second input text
-        a_offsets (list): a list of offset dictionaries for each fragment of the first text
-        b_offsets (list): a list of offset dictionaries for each fragment of the second text
+        a_offsets (list): a list of offset dictionaries
+            for each fragment of the first text
+        b_offsets (list): a list of offset dictionaries
+            for each fragment of the second text
+        min_line_length (int): Insert new lines into the diff
+           (to facilitate readability) after a minimum number of characters.
+           Defaults to `float("inf")` : don't divide into lines
+        line_tag (str): The marker to insert into the diff.
+           Defaults to "<br/>"
 
     Returns:
         tuple (new_text_a, new_text_b, a_offsets, b_offsets)
@@ -241,21 +253,24 @@ def split_lines(text_a, text_b, a_offsets, b_offsets, min_line_length=20, line_t
     
     print("Divided the diff into", n_lines, "lines to improve readability")
     return new_text_a, new_text_b, a_offsets, b_offsets
-        
-        
-    
 
-def secondary_diff(a_offsets, b_offsets, a_idx, b_idx, anchor_a_idx, anchor_b_idx, debug=False):
+
+def secondary_diff(a_offsets, b_offsets, a_idx, b_idx,
+                   anchor_a_idx, anchor_b_idx, debug=False):
     """Use the difflib's SequenceMatcher to find common elements between
     an insertion and a deletion
 
     Args:
-        a_offsets (list): a list of offset dictionaries for each fragment of the first text
-        b_offsets (list): a list of offset dictionaries for each fragment of the second text
+        a_offsets (list): a list of offset dictionaries
+            for each fragment of the first text
+        b_offsets (list): a list of offset dictionaries
+            for each fragment of the second text
         a_idx (int): index of the deletion fragment in a_offsets
         b_idx (int): index of the insertion fragment in b_offsets
-        anchor_a_idx (int): index of the anchor (common or moved) fragment in the first text
-        anchor_b_idx (int): index of the anchor (common or moved) fragment in the second text
+        anchor_a_idx (int): index of the anchor (common or moved) fragment
+            in the first text
+        anchor_b_idx (int): index of the anchor (common or moved) fragment
+            in the second text
         debug (bool): print debugging information
     """
     
@@ -286,42 +301,29 @@ def secondary_diff(a_offsets, b_offsets, a_idx, b_idx, anchor_a_idx, anchor_b_id
         id_b = float(f"{b_offsets[b_idx]['id']}.{i:03d}")
 
         if tag == "equal":
-            # Earlier, I tried using the next item's type ("=", "<" or ">"):
-            
-            #a_color = a_offsets[anchor_a_idx]["moved_id"]
-            #b_color = b_offsets[anchor_b_idx]["moved_id"]
-            #a_type = a_offsets[a_idx+1]["type"]
-            #b_type = b_offsets[b_idx+1]["type"]
-            #add_offset(id_a, text_a[a0:a1], a_offsets, start_a+offset_a, a_type, f_color=a_color)
-            #add_offset(id_b, text_b[b0:b1], b_offsets, start_b+offset_b, b_type, f_color=b_color)
-            
-            # or to always use "=" as type;
-            
-            #add_offset(id_a, text_a[a0:a1], a_offsets, start_a+offset_a, "=", f_color=a_color)
-            #add_offset(id_b, text_b[b0:b1], b_offsets, start_b+offset_b, "=", f_color=b_color)
-
-            # both only worked in some test cases.
-            # New attempt, based on how close the two are:
-            if abs(id_a-id_b) < 2: # if the two are very close, consider them common text:
-                add_offset(id_a, text_a[a0:a1], a_offsets, start_a+offset_a, "=",
-                           f_color=0, common_id=id_a)
-                add_offset(id_b, text_b[b0:b1], b_offsets, start_b+offset_b, "=",
-                           f_color=0, common_id=id_a)
-            else: # if they are further apart, use the type of the anchor fragment:
+            # Decide the type based on the proximity of the subfragments:
+            if abs(id_a-id_b) < 2:
+                # if the two are very close, consider them common text:
+                add_offset(id_a, text_a[a0:a1], a_offsets, start_a+offset_a,
+                           "=", f_color=0, common_id=id_a)
+                add_offset(id_b, text_b[b0:b1], b_offsets, start_b+offset_b,
+                           "=", f_color=0, common_id=id_a)
+            else:
+                # if they are further apart, use the type of the anchor fragment:
                 a_type = a_offsets[anchor_a_idx]["type"]
                 b_type = b_offsets[anchor_b_idx]["type"]
                 if a_type == "=" and b_type == "=":
-                    add_offset(id_a, text_a[a0:a1], a_offsets, start_a+offset_a, a_type,
-                               f_color=0, common_id=id_a)
-                    add_offset(id_b, text_b[b0:b1], b_offsets, start_b+offset_b, b_type,
-                               f_color=0, common_id=id_a)
+                    add_offset(id_a, text_a[a0:a1], a_offsets, start_a+offset_a,
+                               a_type, f_color=0, common_id=id_a)
+                    add_offset(id_b, text_b[b0:b1], b_offsets, start_b+offset_b,
+                               b_type, f_color=0, common_id=id_a)
                 else:
                     a_color = a_offsets[anchor_a_idx]["moved_id"]
                     b_color = b_offsets[anchor_b_idx]["moved_id"]
-                    add_offset(id_a, text_a[a0:a1], a_offsets, start_a+offset_a, a_type,
-                               f_color=a_color, common_id=0)
-                    add_offset(id_b, text_b[b0:b1], b_offsets, start_b+offset_b, b_type,
-                               f_color=b_color, common_id=0)
+                    add_offset(id_a, text_a[a0:a1], a_offsets, start_a+offset_a,
+                               a_type, f_color=a_color, common_id=0)
+                    add_offset(id_b, text_b[b0:b1], b_offsets, start_b+offset_b,
+                               b_type, f_color=b_color, common_id=0)
             offset_a += len(text_a[a0:a1])
             offset_b += len(text_b[b0:b1])
         elif tag == "delete":
@@ -336,12 +338,9 @@ def secondary_diff(a_offsets, b_offsets, a_idx, b_idx, anchor_a_idx, anchor_b_id
             offset_a += len(text_a[a0:a1])
             offset_b += len(text_b[b0:b1])
 
-    #del a_offsets[a_idx]
-    #del b_offsets[b_idx]
-
     return a_offsets, b_offsets
 
-def refine(a_offsets, b_offsets):
+def refine(a_offsets, b_offsets, debug=False):
     """Refine the diff by comparing the inserted and deleted elements.
 
     We use the common and moved fragments as anchors,
@@ -350,6 +349,7 @@ def refine(a_offsets, b_offsets):
     Args:
         a_offsets (list): a list of offset dictionaries for each fragment of the first text
         b_offsets (list): a list of offset dictionaries for each fragment of the second text
+        debug (bool): print debugging information
 
     Returns:
         tuple
@@ -380,25 +380,28 @@ def refine(a_offsets, b_offsets):
         
         # process the closest addition/deletion before the common/moved segment
         # that has not yet been processed:
-        # (loop through the a_offsets, backwards from the fragment before the anchor fragment)
+        # (loop through the a_offsets, backwards from the fragment
+        # before the anchor fragment)
         for i in reversed(range(a_idx)):    
-            if a_offsets[i]["type"] == '-':                    # DELETED FRAGMENT IN TEXT A
+            if a_offsets[i]["type"] == '-':         # DELETED FRAGMENT IN TEXT A
                 id_a = a_offsets[i]["id"]
-                if id_a in processed_ids:
+                if id_a in processed_ids:      # don't process fragments twice
                     break
                 # loop through the b_offsets, backwards from the fragment before the anchor fragment:
                 for j in reversed(range(b_idx)):
                     id_b = b_offsets[j]["id"]
-                    if id_b in processed_ids:
+                    if id_b in processed_ids:  # don't process fragments twice
                         break
-                    if b_offsets[j]["type"] == '+':            # INSERTED FRAGMENT IN TEXT B
-                        # diff the deleted and inserted fragment:
-                        a_offsets, b_offsets = secondary_diff(a_offsets, b_offsets, i, j, a_idx, b_idx)
+                    if b_offsets[j]["type"] == '+': # INSERTED FRAGMENT IN TEXT B
+                        # diff the deleted and inserted fragments:
+                        r = secondary_diff(a_offsets, b_offsets, i, j, a_idx, b_idx)
+                        a_offsets, b_offsets = r
                         # make sure fragments are not processed twice:
                         processed_ids.add(id_a)
                         processed_ids.add(id_b)
                         # fragments that were broken into multiple subfragments
-                        # will be deleted later; do not delete if no shared subfragments were found:
+                        # will be deleted later; 
+                        # do not delete if no shared subfragments were found:
                         if (not str(a_offsets[-1]["id"]).startswith(f"{id_a}.")) \
                            or (not str(b_offsets[-1]["id"]).startswith(f"{id_b}.")):
                             do_not_delete.add(id_a)
@@ -406,8 +409,23 @@ def refine(a_offsets, b_offsets):
                         break
                 break
 
-    # TODO? check unprocessed additions and deletions?
-
+    # TODO: check unprocessed additions and deletions
+    if debug:
+        not_processed_a = [d for d in a_offsets \
+                           if  d["id"] not in processed_ids \
+                           and d["type"] in "+-"]
+        not_processed_b = [d for d in b_offsets \
+                           if  d["id"] not in processed_ids \
+                           and d["type"] in "+-"]
+        n_unprocessed = len(not_processed_a) + len(not_processed_b)
+        print(n_unprocessed, "unrefined additions and deletions")
+        if n_unprocessed > 0:
+            print("-", len(not_processed_a), "from a_offsets:")
+            for d in not_processed_a:
+                print(d)
+            print("-", len(not_processed_b), "from b_offsets:")
+            for d in not_processed_b:
+                print(d)
     
     # remove the fragments that were broken into subfragments:
     to_be_deleted = set([id_ for id_ in processed_ids if id_ not in do_not_delete])
@@ -502,10 +520,15 @@ def offsets2html(a_offsets, b_offsets, highlight_common=False, outfp=None):
     """Create a html representation of the diff
 
     Args:
-        a_offsets (list): a list of offset dictionaries for each fragment of the first text
-        b_offsets (list): a list of offset dictionaries for each fragment of the second text
-        highlight_common (bool): if True, common and moved text will be highlighted,
-            not deletions and insertions
+        a_offsets (list): a list of offset dictionaries
+            for each fragment of the first text
+        b_offsets (list): a list of offset dictionaries
+            for each fragment of the second text
+        highlight_common (bool): if True, common and moved text
+            will be highlighted, not deletions and insertions.
+            Defaults to False
+        outfp (str): path of the html file.
+            Defaults to None (temp file)
     """
     moved_color = "lightgoldenrodyellow"
     if highlight_common:
@@ -679,7 +702,8 @@ def kitab_diff(a, b, config=None, debug=False,
                include_text=True, min_line_length=float("inf"),
                output_html=False, html_outfp=None,
                highlight_common=False, json_outfp=None,
-               offset_format="list_of_dictionaries", min_tag_chars=MIN_TAG_CHARS):
+               offset_format="list_of_dictionaries",
+               min_tag_chars=MIN_TAG_CHARS):
     """Calculate the diff between two input texts
     (based on the wikEdDiff algorithm and refined using the Heckel algorithm)
     Args:
@@ -763,7 +787,7 @@ def kitab_diff(a, b, config=None, debug=False,
             print(row)
 
     # refine the diff to the sub-word level:
-    a_offsets, b_offsets = refine(a_offsets, b_offsets)
+    a_offsets, b_offsets = refine(a_offsets, b_offsets, debug=debug)
 
     if debug:
         print("-------------------------")
