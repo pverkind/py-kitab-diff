@@ -9,7 +9,7 @@ description = "A diff tool for historical texts, based on WikEdDiff."
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [{ name = "Peter Verkinderen" }]
-dependencies = ["python-wikeddiff"]
+dependencies = ["wikeddiff @ git+https://github.com/lahwaacz/python-wikeddiff.git"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
