@@ -3,11 +3,28 @@ A Python implementation of the javascript KITAB diff code,
 used in the KITAB/OpenITI diffViewer (https://kitab-project.org/diffViewer).
 It is based on (the Python implementation of) WikEdDiff.
 
+The script :
+1. takes the output of the WikEdDiff.diff function,
+   which divides the diff into fragments marked
+   as common (=), deleted (-), inserted (+) or moved (> or <) text;
+2. parses the output into a separate list of fragments for each book
+   (each fragment is represented as a dictionary);
+3. refines the diff by identifying shared text only in insertions and deletions
+   that immediately precede a common or moved fragment;
+4. refines the diff further by identifying longest common substrings
+   in all insertions and deletions.
+5. (optionally) simplifies the diff by merging fragments
+   that are smaller than a specified number of characters
+   with their largest neighbour
+6. Outputs the diff in json and/or html format
+
+
 TO DO:
-- additional refinement: after first refinement, check each of the
-  remaining deleted/added fragments to see if there is 
-- simplify diff by merging neighbouring fragments of same type
-- more tests
+- simplify diff by merging neighbouring fragments of same type,
+  renumber the IDs
+- refine diff by not marking fragments that consist only of stopwords
+  as moved.
+- fix issue with moved text (see around muttasila in the example)
 """
 
 #!pip install git+https://github.com/lahwaacz/python-wikeddiff.git
@@ -32,7 +49,7 @@ MIN_TAG_CHARS = {
 # stopwords list: 25 most frequent Arabic stopwords
 # source: https://www.researchgate.net/publication/306364790_Toward_an_ARABIC_Stop-Words_List_Generation
 # NB: due to normalization, إن and أن are identical, so I added كانت in the end.
-STOPWORDS = [
+ARA_STOPWORDS = [
     "في",
     "من",
     "علي",
@@ -129,6 +146,7 @@ def preprocess(text, normalize_alif=True, normalize_ya=True,
     """
     # remove carriage returns:
     text = re.sub(r"\r", "", text)
+    
     # remove OpenITI mARkdown structural tags:
     text = re.sub(r"### \|+ ", "", text)
     text = re.sub(r"\n# ", "\n", text)
@@ -160,10 +178,11 @@ def preprocess(text, normalize_alif=True, normalize_ya=True,
         for k,v in replace_d.items():
             text = re.sub(k, v, text)
 
+    # remove double spaces:
     text = re.sub(" +", " ", text)
     
     # strip whitespace: 
-    text = re.sub(r"^[\r\n ]+|[\r\n ]+$", "", text)
+    text = re.sub(r"^[\n\t ]+|[\n\t ]+$", "", text)
 
     return text
 
@@ -380,7 +399,7 @@ def shingle(s, n):
 
     Args:
         s (str): input string
-        n (int): number of tokens (characters) in each n-gram
+        n (int): number of characters in each n-gram
 
     Returns:
         list
@@ -393,8 +412,10 @@ def shingle(s, n):
     return shingles
 
 
-def refine(a_offsets, b_offsets, refine_n=3, stopwords=STOPWORDS, debug=False):
-    """Refine the diff by comparing the inserted and deleted elements.
+def refine_anchored(a_offsets, b_offsets, debug=False):
+    """Refine the diff by finding shared text
+    in the inserted and deleted elements close
+    to anchor fragments (common and moved fragments).
 
     We use the common and moved fragments as anchors,
     and compare the closest deletion and insertion before those anchors.
@@ -404,21 +425,15 @@ def refine(a_offsets, b_offsets, refine_n=3, stopwords=STOPWORDS, debug=False):
             for each fragment of the first text
         b_offsets (list): a list of offset dictionaries
             for each fragment of the second text
-        refine_n (int): minimum length of common ngrams to be refined.
-            Defaults to 3
         debug (bool): print debugging information
 
     Returns:
         tuple
     """
-
-    # STEP 1: refine additions and deletions close to anchors:
-
     # generate a list of the ids that are common to both texts:
     a_offsets_ids = [d["id"] for d in a_offsets]
     b_offsets_ids_lookup = {d["id"]: i for i, d in enumerate(b_offsets)}
     common_ids = [id_ for id_ in a_offsets_ids if id_ in b_offsets_ids_lookup]
-    #print("common_ids", common_ids)
 
     # generate a dictionary to facilitate finding the index of the fragments that are moved in b_offsets:
     b_moved_ids_lookup = {d["moved_id"]: i for i, d in enumerate(b_offsets)}
@@ -495,8 +510,28 @@ def refine(a_offsets, b_offsets, refine_n=3, stopwords=STOPWORDS, debug=False):
     a_offsets = sorted(a_offsets, key=lambda d: d["id"])
     b_offsets = sorted(b_offsets, key=lambda d: d["id"])
 
-    # STEP 2: find moved text in additions and deletions further from the anchors:
-    # filter only the additions and deletions from the offsets
+    return a_offsets, b_offsets
+
+def refine_wider(a_offsets, b_offsets, refine_n=3,
+                 stopwords=ARA_STOPWORDS, debug=False):
+    """Refine the diff by comparing the inserted and deleted elements
+    further away from the anchors (common and moved text).
+
+    This function uses shingled ngrams, selects the longest unique substrings
+    that are present in deletions and insertions and marks them as moved text.
+
+    Args:
+        a_offsets (list): a list of offset dictionaries
+            for each fragment of the first text
+        b_offsets (list): a list of offset dictionaries
+            for each fragment of the second text
+        refine_n (int): minimum length of common ngrams to be refined.
+            Defaults to 3
+        debug (bool): print debugging information
+
+    Returns:
+        tuple
+    """
     deletions = {a_idx: d for a_idx, d in enumerate(a_offsets) \
                  if d["type"] == "-"}
     additions = {b_idx: d for b_idx, d in enumerate(b_offsets) \
@@ -560,10 +595,6 @@ def refine(a_offsets, b_offsets, refine_n=3, stopwords=STOPWORDS, debug=False):
             if len(a_idxs) + len(b_idxs) > 2:
                 #print("=> TOO FREQUENT!")
                 continue
-##            print(a_idxs, repr(ngram))
-##            print(">", b_idxs)
-##            print("=> PROCESS!")
-##            print("----")
             a_idx = a_idxs[0][0]
             a_start = a_idxs[0][1]
             a_end = a_start + len(ngram)
@@ -607,88 +638,62 @@ def refine(a_offsets, b_offsets, refine_n=3, stopwords=STOPWORDS, debug=False):
 
 
     # remove the fragments that were broken into subfragments:
-    a_offsets = [d for d in a_offsets if d["id"] not in ngram_fragm_lookup_a.values()]
-    b_offsets = [d for d in b_offsets if d["id"] not in ngram_fragm_lookup_b.values()]
+    a_offsets = [d for d in a_offsets \
+                 if d["id"] not in ngram_fragm_lookup_a.values()]
+    b_offsets = [d for d in b_offsets \
+                 if d["id"] not in ngram_fragm_lookup_b.values()]
 
     # sort the fragments in order of appearance:
     a_offsets = sorted(a_offsets, key=lambda d: d["id"])
     b_offsets = sorted(b_offsets, key=lambda d: d["id"])
 
-    #for d in a_offsets:
-    #    print(d)
-
+    return a_offsets, b_offsets
     
-##    all_del_shingles = []
-##    all_add_shingles = []
-##    del_ngram_lookup = defaultdict(list)
-##    add_ngram_lookup = defaultdict(list)
-##    for a_idx, d in deletions.items():
-##        d["shingles"] = shingle(d["text"], refine_n)
-##        all_del_shingles += d["shingles"]
-##        print(repr(d["text"]), d["shingles"])
-##        for i, ngram in enumerate(d["shingles"]):
-##            del_ngram_lookup[ngram].append((a_idx, i))
-##    for b_idx, d in additions.items():
-##        d["shingles"] = shingle(d["text"], refine_n)
-##        print(d["text"], d["shingles"])
-##        all_add_shingles += d["shingles"]
-##        for i, ngram in enumerate(d["shingles"]):
-##            add_ngram_lookup[ngram].append((b_idx, i))
-##    common_shingles_set = set(all_del_shingles) & set(all_add_shingles)
-##    print(len(common_shingles_set), "common shingles in remaining insertions and deletions:")
-##    print(common_shingles_set)
-##    #print(additions)
-##
-##    # check which ngrams appear more than once on both sides:
-##    add_counter = Counter(all_add_shingles)
-##    del_counter = Counter(all_del_shingles)
-##    freq_ngrams = dict()
-##    for ngram in common_shingles_set:
-##        if add_counter[ngram] > 1 or del_counter[ngram] > 1:
-##            freq_ngrams[ngram] = (add_counter[ngram], del_counter[ngram])
-##            print(add_counter[ngram], del_counter[ngram], ngram)
-##    # differential treatment of frequent ngrams?
-##    # only mark them in the diff if they are close?
-##
-##    for a_idx, d in deletions.items():
-##        streak = ""
-##        streak_start = 0
-##        streak_idxs = []
-##        for a_ngram_idx, a_ngram in d["shingles"]:
-##            end_of_streak=True
-##            if a_ngram in add_ngram_lookup:
-##                if streak == "":
-##                    streak_start = a_ngram_idx
-##                    streak = a_ngram
-##                    streak_idxs = add_ngram_lookup[a_ngram] # [(b_idx, b_ngram_idx)]
-##                    end_of_streak = False
-##                else:
-##                    # check if the ngram immediately follows the previous ngram:
-##                    for start_b_idx, start_b_ngram_idx in streak_idxs:
-##                        continuation = False
-##                        for b_idx, b_ngram_idx in add_ngram_lookup[a_ngram]:
-##                            # check if the new ngram is from the same b fragment:
-##                            if start_b_idx == b_idx:
-##                                # check if the new ngram immediately follows the previous one:
-##                                prev_ngram_idx = b_ngram_idx + (refine_n - len(streak))
-##                                if b_ngram_idx == prev_ngram_idx:
-##                                    continuation = True
-##                                    streak += ngram[-1]
-##                
-##            else:
-##                end_of_streak = True
-##            if end_of_streak == True and streak != "":
-##                    print("MOVED!?", a_idx, streak_idxs, streak)
-##                    # TO DO: split the deletion and insertion
-##                    streak = ""
-##                    streak_idxs = []
+
+def refine(a_offsets, b_offsets, refine_n=3,
+           stopwords=ARA_STOPWORDS, debug=False):
+    """Refine the diff by comparing the inserted and deleted elements.
+
+    Args:
+        a_offsets (list): a list of offset dictionaries
+            for each fragment of the first text
+        b_offsets (list): a list of offset dictionaries
+            for each fragment of the second text
+        refine_n (int): minimum length of common ngrams to be refined.
+            Defaults to 3
+        debug (bool): print debugging information
+
+    Returns:
+        tuple
+    """
+
+    # STEP 1: refine additions and deletions close to anchors:
+    r = refine_anchored(a_offsets, b_offsets, debug=debug)
+    a_offsets, b_offsets = r
+
+
+    # STEP 2: find moved text in additions and deletions further from the anchors:
+    # filter only the additions and deletions from the offsets
+    r = refine_wider(a_offsets, b_offsets, refine_n=refine_n,
+                     stopwords=stopwords, debug=debug)
+    a_offsets, b_offsets = r
             
     return a_offsets, b_offsets
 
 def add_longest_substrings(longest_substrings_by_index, offsets,
                            moved_ngram_ids, ngram_fragm_lookup,
                            debug=False):
-    """"""
+    """Add longest substrings to the offset list
+
+    Args:
+        longest_substrings_by_index (dict):
+            key: index of the fragment in the offsets list
+            value: list of ()
+        offsets (list): 
+        moved_ngram_ids (dict): 
+        ngram_fragm_lookup (dict): 
+        debug (bool):
+    """
     
     # loop through the offsets list and split the fragment texts:
     for idx, ngram_list in sorted(longest_substrings_by_index.items()):
@@ -867,6 +872,14 @@ def offsets2html(a_offsets, b_offsets, highlight_common=False, outfp=None):
         outfp (str): path of the html file.
             Defaults to None (temp file)
     """
+    if re.findall("[ء-ي]", a_offsets[0]["text"]):
+        text_align = "right"
+        direction = "rtl"
+    else:
+        text_align = "left"
+        direction = "ltr"
+    print(text_align)
+    print(direction)
     moved_color = "lightgoldenrodyellow"
     if highlight_common:
         add_color = "white"
@@ -887,10 +900,14 @@ def offsets2html(a_offsets, b_offsets, highlight_common=False, outfp=None):
         }
         .moved {
             background-color: %s;
-        }""" % (add_color, del_color, common_color, moved_color)
-    
+        }
+        td {
+            text-align: %s;
+            direction: %s;
+        }""" % (add_color, del_color, common_color, moved_color, text_align, direction)
+        
     template = f"""<!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1037,10 +1054,11 @@ def kitab_diff(a, b, config=None, debug=False,
                normalize_alif=True, normalize_ya=True,
                normalize_ha=True, remove_punctuation=True, replace_d={},
                include_text=True, min_line_length=float("inf"),
+               do_refine=True, refine_n=3, stopwords=ARA_STOPWORDS,
+               do_simplify=True, min_tag_chars=MIN_TAG_CHARS,
                output_html=False, html_outfp=None,
                highlight_common=False, json_outfp=None,
-               offset_format="list_of_dictionaries",
-               min_tag_chars=MIN_TAG_CHARS):
+               offset_format="list_of_dictionaries"):
     """Calculate the diff between two input texts
     (based on the wikEdDiff algorithm and refined using the Heckel algorithm)
     Args:
@@ -1057,7 +1075,21 @@ def kitab_diff(a, b, config=None, debug=False,
         remove_punctuation (bool): remove punctuation. Defaults to True
         replace_d (dict): custom replacements: replace key by value.
             Defaults to empty dict (no custom replacements)
-        include_text (bool): include the text of the fragment in the offset dictionaries        
+        include_text (bool): include the text of the fragment in the offset dictionaries
+        do_refine (bool): refine the wikEdDiff output.
+            Defaults to True
+        refine_n (int): minimum number of characters in refined fragments.
+            Defaults to 3.
+        stopwords (list): if defined, moved fragments that consist only of stopwords
+            will not be considered moved. Defaults to a list of 25 Arabic stopwords.
+        do_simplify (bool): remove tags from fragments with less than
+            the number of characters specified by `min_tag_chars`.
+            Defaults to True
+        min_tag_chars (dict): for each tag type, the minimum number of characters.
+            if set to more than one, sequences of characters
+            identified as this tag that are below this minimum
+            will not be marked as this tag but given the same type as the next or previous tag.
+            Defaults to:  {"+": 1, "-": 1, "=": 3, ">": 3, "<": 3}
         min_line_length (int): split the output into lines
             with a minimum number of characters, for easier comparison of texts.
             Defaults to `float("inf")`: do not split into rows.
@@ -1068,11 +1100,6 @@ def kitab_diff(a, b, config=None, debug=False,
             will be highlighed in the html; if True, common (and moved) text is highlighted.
         offset_format (str): one of "list_of_dictionaries", "list_of_tuples", "dict_of_offsets"
         json_outfp (str): path to the output json file
-        min_tag_chars (dict): for each tag type, the minimum number of characters.
-            if set to more than one, sequences of characters
-            identified as this tag that are below this minimum
-            will not be marked as this tag but given the same type as the next or previous tag.
-            Defaults to:  {"+": 1, "-": 1, "=": 3, ">": 3, "<": 3}
 
    Returns:
        tup
@@ -1085,6 +1112,7 @@ def kitab_diff(a, b, config=None, debug=False,
                    normalize_ha=normalize_ha, remove_punctuation=remove_punctuation,
                    replace_d=replace_d)
 
+    
     # create an instance of the WikEdDiff class
     if not config:
         config = WikEdDiff.WikEdDiffConfig()
@@ -1124,7 +1152,9 @@ def kitab_diff(a, b, config=None, debug=False,
             print(row)
 
     # refine the diff to the sub-word level:
-    a_offsets, b_offsets = refine(a_offsets, b_offsets, debug=debug)
+    if do_refine:
+        a_offsets, b_offsets = refine(a_offsets, b_offsets,
+                                      debug=debug, refine_n=refine_n)
 
     if debug:
         print("-------------------------")
@@ -1139,8 +1169,9 @@ def kitab_diff(a, b, config=None, debug=False,
             print(row)
 
     # remove tags that are too short:
-    a_offsets = simplify_diff(a_offsets, min_tag_chars=min_tag_chars)
-    b_offsets = simplify_diff(b_offsets, min_tag_chars=min_tag_chars)
+    if do_simplify:
+        a_offsets = simplify_diff(a_offsets, min_tag_chars=min_tag_chars)
+        b_offsets = simplify_diff(b_offsets, min_tag_chars=min_tag_chars)
 
     # add lines to make the diff more readabl:
     if min_line_length < float("inf"):
@@ -1149,7 +1180,7 @@ def kitab_diff(a, b, config=None, debug=False,
         a, b, a_offsets, b_offsets = r
 
     # generate a quick test html:
-    if output_html:
+    if output_html or html_outfp:
         a_html, b_html = offsets2html(a_offsets, b_offsets, outfp=html_outfp,
                                       highlight_common=highlight_common)
 
@@ -1163,7 +1194,7 @@ def kitab_diff(a, b, config=None, debug=False,
         "a_offsets": a_offsets,
         "b_offsets": b_offsets
         }
-    if output_html:
+    if output_html or html_outfp:
         output_d["html_a"] = a_html
         output_d["html_b"] = b_html
 
@@ -1174,7 +1205,7 @@ def kitab_diff(a, b, config=None, debug=False,
 
     print("Done!")
     
-    if output_html:
+    if output_html or html_outfp:
         return a, b, a_offsets, b_offsets, a_html, b_html
     else:
         return a, b, a_offsets, b_offsets
@@ -1182,12 +1213,14 @@ def kitab_diff(a, b, config=None, debug=False,
     
 if __name__ == "__main__":
     r = kitab_diff(input_a, input_b, config=None, debug=False, 
-                   normalize_alif=True, normalize_ya=True,
-                   normalize_ha=True, remove_punctuation=True, replace_d={},
-                   include_text=True, min_line_length=30,
-                   output_html=True, html_outfp="test.html",
-                   highlight_common=False, json_outfp=None,
-                   offset_format="dict_of_offsets", min_tag_chars=MIN_TAG_CHARS)
+               normalize_alif=True, normalize_ya=True,
+               normalize_ha=True, remove_punctuation=True, replace_d={},
+               include_text=True, min_line_length=float("inf"),
+               do_refine=True, refine_n=3, stopwords=ARA_STOPWORDS,
+               do_simplify=True, min_tag_chars=MIN_TAG_CHARS,
+               output_html=False, html_outfp=None,
+               highlight_common=False, json_outfp=None,
+               offset_format="list_of_dictionaries")
     try:
         a, b, a_offsets, b_offsets, a_html, b_html = r
     except:

@@ -4,6 +4,21 @@ This Python version of the KITAB diff is based on the Python port of the WikEdDi
 
 https://github.com/lahwaacz/python-wikeddiff/
 
+The script :
+1. takes the output of the WikEdDiff.diff function,
+   which divides the diff into fragments marked
+   as common (=), deleted (-), inserted (+) or moved (> or <) text;
+2. parses the output into a separate list of fragments for each book
+   (each fragment is represented as a dictionary);
+3. refines the diff by identifying shared text only in insertions and deletions
+   that immediately precede a common or moved fragment;
+4. refines the diff further by identifying longest common substrings
+   in all insertions and deletions.
+5. (optionally) simplifies the diff by merging fragments
+   that are smaller than a specified number of characters
+   with their largest neighbour
+6. Outputs the diff in json and/or html format
+
 ## Installation
 
 ```
