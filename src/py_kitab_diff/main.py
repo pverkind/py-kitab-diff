@@ -18,6 +18,7 @@ import os
 import json
 import webbrowser
 import tempfile
+from collections import Counter, defaultdict
 
 # define how many characters each fragment type should minimally contain:
 MIN_TAG_CHARS = {
@@ -27,6 +28,38 @@ MIN_TAG_CHARS = {
     ">": 3,   # MOVED (forward)
     "<": 3    # MOVED (backward)
     }
+
+# stopwords list: 25 most frequent Arabic stopwords
+# source: https://www.researchgate.net/publication/306364790_Toward_an_ARABIC_Stop-Words_List_Generation
+# NB: due to normalization, إن and أن are identical, so I added كانت in the end.
+STOPWORDS = [
+    "في",
+    "من",
+    "علي",
+    "ان",
+    "الي",
+    "التي",
+    "عن",
+    "لا",
+    "ما",
+    "او",
+    "هذا",
+    "هذه",
+    "اللذي",
+    "كان",
+    "مع",
+    "و",
+    "ذلك",
+    "الله",
+    "بين",
+    "كل",
+    "هو",
+    "كما",
+    "لم",
+    "بعد",
+    "كانت",
+    ]
+
 
 
 ###############
@@ -126,6 +159,8 @@ def preprocess(text, normalize_alif=True, normalize_ya=True,
     if replace_d:
         for k,v in replace_d.items():
             text = re.sub(k, v, text)
+
+    text = re.sub(" +", " ", text)
     
     # strip whitespace: 
     text = re.sub(r"^[\r\n ]+|[\r\n ]+$", "", text)
@@ -340,20 +375,44 @@ def secondary_diff(a_offsets, b_offsets, a_idx, b_idx,
 
     return a_offsets, b_offsets
 
-def refine(a_offsets, b_offsets, debug=False):
+def shingle(s, n):
+    """Convert string into array of overlapping n-grams
+
+    Args:
+        s (str): input string
+        n (int): number of tokens (characters) in each n-gram
+
+    Returns:
+        list
+    """
+    if len(s)<n:
+      return []
+    shingles = [];
+    for i in range(len(s)+1-n):
+      shingles.append(s[i:i+n])
+    return shingles
+
+
+def refine(a_offsets, b_offsets, refine_n=3, stopwords=STOPWORDS, debug=False):
     """Refine the diff by comparing the inserted and deleted elements.
 
     We use the common and moved fragments as anchors,
     and compare the closest deletion and insertion before those anchors.
 
     Args:
-        a_offsets (list): a list of offset dictionaries for each fragment of the first text
-        b_offsets (list): a list of offset dictionaries for each fragment of the second text
+        a_offsets (list): a list of offset dictionaries
+            for each fragment of the first text
+        b_offsets (list): a list of offset dictionaries
+            for each fragment of the second text
+        refine_n (int): minimum length of common ngrams to be refined.
+            Defaults to 3
         debug (bool): print debugging information
 
     Returns:
         tuple
     """
+
+    # STEP 1: refine additions and deletions close to anchors:
 
     # generate a list of the ids that are common to both texts:
     a_offsets_ids = [d["id"] for d in a_offsets]
@@ -435,9 +494,287 @@ def refine(a_offsets, b_offsets, debug=False):
     # sort the fragments in order of appearance:
     a_offsets = sorted(a_offsets, key=lambda d: d["id"])
     b_offsets = sorted(b_offsets, key=lambda d: d["id"])
+
+    # STEP 2: find moved text in additions and deletions further from the anchors:
+    # filter only the additions and deletions from the offsets
+    deletions = {a_idx: d for a_idx, d in enumerate(a_offsets) \
+                 if d["type"] == "-"}
+    additions = {b_idx: d for b_idx, d in enumerate(b_offsets) \
+                 if d["type"] == "+"}
+
+    # shingle the texts and get a set of common ngrams:
+    all_common_ngrams = {}
+    for n in range(refine_n, 100):
+        if debug:
+            print( "#########")
+            print(f"{n}-grams")
+            print( "#########")
+        all_del_shingles = []
+        all_add_shingles = []
+        del_ngram_lookup = defaultdict(list)
+        add_ngram_lookup = defaultdict(list)
+        for a_idx, d in deletions.items():
+            shingles = shingle(d["text"], n)
+            all_del_shingles += shingles
+            for ngram_idx, ngram in enumerate(shingles):
+                del_ngram_lookup[ngram].append((a_idx, ngram_idx))
+        for b_idx, d in additions.items():
+            shingles = shingle(d["text"], n)
+            all_add_shingles += shingles
+            for ngram_idx, ngram in enumerate(shingles):
+                add_ngram_lookup[ngram].append((b_idx, ngram_idx))
+        common_shingles_set = set(all_del_shingles) & set(all_add_shingles)
+        if not common_shingles_set:
+            if debug:
+                print("NO MORE COMMON NGRAMS")
+            break
+        
+        all_common_ngrams[n] = {
+            "a_ngram_lookup": {ngram: idxs for ngram, idxs in del_ngram_lookup.items() \
+                               if ngram in common_shingles_set},
+            "b_ngram_lookup": {ngram: idxs for ngram, idxs in add_ngram_lookup.items() \
+                               if ngram in common_shingles_set},
+            }
+        if debug:
+            print(len(common_shingles_set),
+                  "common shingles in remaining insertions and deletions:")
+            print(common_shingles_set)
+
+    # select only the longest substrings:
+    longest_substrings_a = []
+    longest_substrings_b = []
+    for n in reversed(sorted(all_common_ngrams.keys())):
+        a_ngram_lookup = all_common_ngrams[n]["a_ngram_lookup"]
+        b_ngram_lookup = all_common_ngrams[n]["b_ngram_lookup"]
+        
+        for ngram, a_idxs in a_ngram_lookup.items():
+            b_idxs = b_ngram_lookup[ngram]
+            a_idxs = filter_substrings(ngram, a_idxs, longest_substrings_a)
+            b_idxs = filter_substrings(ngram, b_idxs, longest_substrings_b)
+            if len(a_idxs) == 0 or len(b_idxs) == 0:
+                #print("=> SUBSTRING OF LONGER NGRAM!")
+                continue
+            if ngram.strip() in stopwords:
+                #print("=> STOPWORD!")
+                continue
+            if len(a_idxs) + len(b_idxs) > 2:
+                #print("=> TOO FREQUENT!")
+                continue
+##            print(a_idxs, repr(ngram))
+##            print(">", b_idxs)
+##            print("=> PROCESS!")
+##            print("----")
+            a_idx = a_idxs[0][0]
+            a_start = a_idxs[0][1]
+            a_end = a_start + len(ngram)
+            longest_substrings_a.append((ngram, a_idx, a_start, a_end))
+            b_idx = b_idxs[0][0]
+            b_start = b_idxs[0][1]
+            b_end = b_start + len(ngram)
+            longest_substrings_b.append((ngram, b_idx, b_start, b_end))
+
+    # sort the longest substring lists by index:
+    longest_substrings_a_by_index = defaultdict(list)
+    for ngram, a_idx, a_start, a_end in longest_substrings_a:
+        longest_substrings_a_by_index[a_idx].append((ngram, a_idx, a_start, a_end))
+    longest_substrings_b_by_index = defaultdict(list)
+    for ngram, b_idx, b_start, b_end in longest_substrings_b:
+        longest_substrings_b_by_index[b_idx].append((ngram, b_idx, b_start, b_end))
+
+    # generate moved_ids for the moved ngrams:
+    last_moved_id = max([d["moved_id"] for d in a_offsets])
+    moved_ngram_ids = {}
+    for ngram, _, _, _ in longest_substrings_a:
+        last_moved_id += 1
+        moved_ngram_ids[ngram] = last_moved_id
+
+    # generate lookup dictionaries with fragm_id for each ngram:
+    ngram_fragm_lookup_a = {}
+    for ngram, a_idx, _, _ in longest_substrings_a:
+        ngram_fragm_lookup_a[ngram] = a_offsets[a_idx]["id"]
+    ngram_fragm_lookup_b = {}
+    for ngram, b_idx, _, _ in longest_substrings_b:
+        ngram_fragm_lookup_b[ngram] = b_offsets[b_idx]["id"]
+    
+    
+    # add the substrings as moved subfragments to the offset lists:
+    a_offsets = add_longest_substrings(longest_substrings_a_by_index,
+                                       a_offsets, moved_ngram_ids,
+                                       ngram_fragm_lookup_b, debug=debug)
+    b_offsets = add_longest_substrings(longest_substrings_b_by_index,
+                                       b_offsets, moved_ngram_ids,
+                                       ngram_fragm_lookup_a, debug=debug)
+
+
+    # remove the fragments that were broken into subfragments:
+    a_offsets = [d for d in a_offsets if d["id"] not in ngram_fragm_lookup_a.values()]
+    b_offsets = [d for d in b_offsets if d["id"] not in ngram_fragm_lookup_b.values()]
+
+    # sort the fragments in order of appearance:
+    a_offsets = sorted(a_offsets, key=lambda d: d["id"])
+    b_offsets = sorted(b_offsets, key=lambda d: d["id"])
+
+    #for d in a_offsets:
+    #    print(d)
+
+    
+##    all_del_shingles = []
+##    all_add_shingles = []
+##    del_ngram_lookup = defaultdict(list)
+##    add_ngram_lookup = defaultdict(list)
+##    for a_idx, d in deletions.items():
+##        d["shingles"] = shingle(d["text"], refine_n)
+##        all_del_shingles += d["shingles"]
+##        print(repr(d["text"]), d["shingles"])
+##        for i, ngram in enumerate(d["shingles"]):
+##            del_ngram_lookup[ngram].append((a_idx, i))
+##    for b_idx, d in additions.items():
+##        d["shingles"] = shingle(d["text"], refine_n)
+##        print(d["text"], d["shingles"])
+##        all_add_shingles += d["shingles"]
+##        for i, ngram in enumerate(d["shingles"]):
+##            add_ngram_lookup[ngram].append((b_idx, i))
+##    common_shingles_set = set(all_del_shingles) & set(all_add_shingles)
+##    print(len(common_shingles_set), "common shingles in remaining insertions and deletions:")
+##    print(common_shingles_set)
+##    #print(additions)
+##
+##    # check which ngrams appear more than once on both sides:
+##    add_counter = Counter(all_add_shingles)
+##    del_counter = Counter(all_del_shingles)
+##    freq_ngrams = dict()
+##    for ngram in common_shingles_set:
+##        if add_counter[ngram] > 1 or del_counter[ngram] > 1:
+##            freq_ngrams[ngram] = (add_counter[ngram], del_counter[ngram])
+##            print(add_counter[ngram], del_counter[ngram], ngram)
+##    # differential treatment of frequent ngrams?
+##    # only mark them in the diff if they are close?
+##
+##    for a_idx, d in deletions.items():
+##        streak = ""
+##        streak_start = 0
+##        streak_idxs = []
+##        for a_ngram_idx, a_ngram in d["shingles"]:
+##            end_of_streak=True
+##            if a_ngram in add_ngram_lookup:
+##                if streak == "":
+##                    streak_start = a_ngram_idx
+##                    streak = a_ngram
+##                    streak_idxs = add_ngram_lookup[a_ngram] # [(b_idx, b_ngram_idx)]
+##                    end_of_streak = False
+##                else:
+##                    # check if the ngram immediately follows the previous ngram:
+##                    for start_b_idx, start_b_ngram_idx in streak_idxs:
+##                        continuation = False
+##                        for b_idx, b_ngram_idx in add_ngram_lookup[a_ngram]:
+##                            # check if the new ngram is from the same b fragment:
+##                            if start_b_idx == b_idx:
+##                                # check if the new ngram immediately follows the previous one:
+##                                prev_ngram_idx = b_ngram_idx + (refine_n - len(streak))
+##                                if b_ngram_idx == prev_ngram_idx:
+##                                    continuation = True
+##                                    streak += ngram[-1]
+##                
+##            else:
+##                end_of_streak = True
+##            if end_of_streak == True and streak != "":
+##                    print("MOVED!?", a_idx, streak_idxs, streak)
+##                    # TO DO: split the deletion and insertion
+##                    streak = ""
+##                    streak_idxs = []
             
     return a_offsets, b_offsets
+
+def add_longest_substrings(longest_substrings_by_index, offsets,
+                           moved_ngram_ids, ngram_fragm_lookup,
+                           debug=False):
+    """"""
     
+    # loop through the offsets list and split the fragment texts:
+    for idx, ngram_list in sorted(longest_substrings_by_index.items()):
+        if debug:
+            print(idx)
+        pos = 0
+        text = offsets[idx]["text"]
+        if debug:
+            print("fragment text before splitting:", repr(text))
+        fragm_id = offsets[idx]["id"]
+        fragm_start = offsets[idx]["start"]
+        fragm_end = offsets[idx]["end"]
+        fragm_type = offsets[idx]["type"]
+        split_text = []
+        i = 0
+        if debug:
+            ("fragment text split:")
+        for ngram, _, start, end in sorted(ngram_list, key=lambda tup: tup[2]):
+            #print(ngram, _, start, end in ngram_list)
+            #print(repr(ngram), "==", repr(text[start:end]))
+            #print(ngram == text[start:end])
+            # process the part of the string before the ngram (or between ngrams):
+            if pos != start:
+                i+= 1
+                split_id = fragm_id + (i*0.0001)
+                if debug:
+                    print(split_id, fragm_type, repr(text[pos:start]))
+                add_offset(split_id, text[pos:start], offsets, fragm_start+pos,
+                           fragm_type, f_color=0, common_id=0)
+                #print(offsets[-1])
+
+            # process the ngram itself:
+            other_fragm_id = ngram_fragm_lookup[ngram]
+            if fragm_id < other_fragm_id:
+                moved_type = ">"
+            else:
+                moved_type = "<"
+            i+= 1
+            split_id = fragm_id + (i*0.0001)
+            if debug:
+                print(split_id, moved_type, repr(text[start:end]))
+            add_offset(split_id, text[start:end], offsets, fragm_start+start,
+                       moved_type, f_color=moved_ngram_ids[ngram], common_id=0)
+            #print(offsets[-1])
+            pos = end
+        # process the part of the string after the last ngram:
+        if pos != fragm_end-fragm_start:
+            #print("pos:", pos, "fragm_end:", fragm_end-fragm_start)
+            i+= 1
+            split_id = fragm_id + (i*0.0001)
+            if debug:
+                print(split_id, fragm_type, repr(text[pos:]))
+            add_offset(split_id, text[end:], offsets, fragm_start+end,
+                       fragm_type, f_color=0, common_id=0)
+            #print(offsets[-1])
+        if debug:
+            print("===")
+    return offsets
+
+def filter_substrings(ngram, idxs, processed):
+    """
+    Args:
+        ngram (str): current ngram
+        idxs (list): list of tuples (fragment_id, start_index)
+        processed (list): list of tuples (ngram, fragment_id, start_index, end_index)
+            of already processed (longer) ngrams
+    """
+
+    def overlaps(s1, e1, s2, e2):
+        return not (e1 <= s2 or e2 <= s1)
+
+    filtered = []
+
+    for frag_id, frag_start in idxs:
+        frag_end = frag_start + len(ngram)
+        overlap_found = False
+        for p_ngram, p_id, p_start, p_end in processed:
+            if frag_id == p_id and overlaps(frag_start, frag_end, p_start, p_end):
+                overlap_found = True
+                break
+
+        if overlap_found:
+            continue
+
+        filtered.append((frag_id, frag_start))
+    return filtered
 
 def parse_wikEdDiff(fragments, include_text=True, debug=False):
     """Parse the output of the wikEdDiff diff into separate offset lists for each input text
