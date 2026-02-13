@@ -1,17 +1,24 @@
 # py-kitab-diff
 
-This Python version of the KITAB diff is based on the Python port of the WikEdDiff json library: 
+This Python version of the KITAB diff is based on the Python port of the WikEdDiff json library (see below): 
 
 https://github.com/lahwaacz/python-wikeddiff/
 
-## Usage
-
-In the simplest form, provide two strings to the inputs: 
+## Installation
 
 ```
-#! pip install "git+https://github.com/pverkind/py-kitab-diff"
+pip install "git+https://github.com/pverkind/py-kitab-diff"
+```
 
+## Usage
+
+In the simplest form, provide two strings as inputs to the kitab_diff function: 
+
+```
 from py_kitab_diff import kitab_diff
+
+input_a = "This is the start. I have moved this sentence. Sime tipos! This is the end."
+input_b = "I have moved this sentence. This was the start. Some typos! Addition... This is the end."
 
 kitab_diff(input_a, input_b, json_outfp="diff.json")
 ```
@@ -27,21 +34,17 @@ dictionary with the following fields:
     - start: start character offset of the fragment
     - end: end character offset of the fragment,
     - type: symbol for common text (=), deletion (-), insertion (+), moved text (< or >) 
-    - moved_id: numeric ID that allows to identify pairs of moved fragments. Defaults to 0 for non-moved fragments. (same number as fragment.color)
+    - moved_id: numeric ID that allows to identify pairs of moved fragments. Defaults to 0 for non-moved fragments. (same number as WikEdDiff's fragment.color)
     - common_id: numeric ID that allows to identify pairs of common fragments. Defaults to 0 for inserted, deleted or moved fragments.
 - "b_offsets": idem, for the second input
 ```
 
-Additional parameters for the function:
-
-
+Optional parameters for the kitab_diff function:
 
 ```
-    a (str): first input text
-    b (str): second input text
     config (Obj): WikEdDiff.WikEdDiffConfig() object,
         configuration options for WikEdDiff. Defaults to None (default config)
-    debug (bool): print debugging info. Defaults to False.
+    debug (bool): print debugging info. Defaults to False
     normalize_alif (bool): normalize alif+madda/wasla/hamza to simple alif. 
         Defaults to True
     normalize_ya (bool): normalize Persian ya and alif maqsura to Arabic ya. 
@@ -55,7 +58,7 @@ Additional parameters for the function:
         in the offset dictionaries. Defaults to True    
     min_line_length (int): split the output into lines
         with a minimum number of characters, for easier comparison of texts.
-        Defaults to `float("inf")`: do not split into rows.
+        Defaults to `float("inf")`: do not split into rows
     output_html (bool): if True, a html representation of the diff will be generated. 
         Defaults to False
     html_outfp (str): path to the output html file.
@@ -70,6 +73,7 @@ Additional parameters for the function:
         if set to more than one, sequences of characters
         identified as this tag that are below this minimum
         will not be marked as this tag but given the same type as the next or previous tag.
+        Defaults to:  {"+": 1, "-": 1, "=": 3, ">": 3, "<": 3}
 ```
 
 Examples: 
@@ -77,8 +81,18 @@ Examples:
 Create a html representation of the diff for a quick check:
 
 ```
-r = kitab_diff(input_a, input_b, output_html=True)
+f = kitab_diff(input_a, input_b, output_html=True)
 ```
+
+<img width="969" height="101" alt="image" src="https://github.com/user-attachments/assets/5d5f1967-b3b4-4b3f-a96b-9879323f71a6" />
+
+
+Create a html representation of the diff and save it:
+
+```
+r = kitab_diff(input_a, input_b, output_html=True, html_outfp="diff.html")
+```
+
 
 
 ```
@@ -97,22 +111,22 @@ except:
 
 
 
-## Background on python-wikeddiff
+## Background on 
 
-This library is a port of the WikEdDiff [json library](https://en.wikipedia.org/wiki/User:Cacycle/diff) (code [here](https://en.wikipedia.org/w/index.php?title=User:Cacycle/diff.js&action=raw&ctype=text/javascript))
+[python-wikeddiff](https://github.com/lahwaacz/python-wikeddiff) is a port of the [WikEdDiff javascript code](https://en.wikipedia.org/wiki/User:Cacycle/diff) (code [here](https://en.wikipedia.org/w/index.php?title=User:Cacycle/diff.js&action=raw&ctype=text/javascript))
 
-### Installation: 
-
-pip install git+https://github.com/lahwaacz/python-wikeddiff.git
-
-### Usage:
-
+### python-wikeddiff installation: 
 
 ```
+pip install git+https://github.com/lahwaacz/python-wikeddiff.git
+```
 
+### python-wikeddiff usage:
+
+```
 import WikEdDiff
 
-config = WikEdDiff.WikEdDiffConfig()
+config = WikEdDiff.WikEdDiffConfig()          # use default configuration
 diffCalculator = WikEdDiff.WikEdDiff(config)
 
 # run the WikEdDiffviewer
@@ -120,10 +134,22 @@ fragments = diffCalculator.diff("This is a test", "It's only a test sentence")
 
 for f in fragments:
     print(f.color, f.type, repr(f.text))
-
 ``` 
 
+Output: 
+```
+0 { ''
+0 [ ''
+0 + "It's only"
+0 - 'This is'
+0 = ' a test'
+0 + ' sentence'
+0 ] ''
+0 } ''
+```
+
 Default configuration: 
+
 ```
 blockMinLength = 3
 charDiff = True
