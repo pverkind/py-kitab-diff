@@ -129,6 +129,9 @@ input_b = """# (15)
 #input_a = "This is the start. I have moved this sentence. Sime tipos! This is the end."
 #input_b = "I have moved this sentence. This was the start. Some typos! Addition... This is the end."
 
+input_a = "قله من يدخل الجنه منهن قال ابو عبيده وهذا الوصف في الغربان عزيز لا يكاد يوجد انما ارجلها حمر"
+input_b = "وهذا الوصف في الغربان عزيز لا يكاد يوجد انما ارجلها حمر وصف قله من يدخل الجنه منهن هذا قول"
+
 def preprocess(text, normalize_alif=True, normalize_ya=True,
                normalize_ha=True, remove_punctuation=True, replace_d={}):
     """Normalize the input texts by removing mARkdown tags
@@ -838,23 +841,27 @@ def parse_wikEdDiff(fragments, include_text=True, debug=False):
             if not moved:
                 last_a = add_offset(id_, f.text, a_offsets, last_a, f.type, f.color, include_text=include_text)
                 last_b = add_offset(id_, f.text, b_offsets, last_b, f.type, f.color, include_text=include_text)
-            elif moved == ">":
-                last_a = add_offset(id_, f.text, a_offsets, last_a, moved, f.color, include_text=include_text)
-            elif moved == "<":
+            elif moved in "><":
                 last_b = add_offset(id_, f.text, b_offsets, last_b, moved, f.color, include_text=include_text)
+            #elif moved == ">":
+            #    last_a = add_offset(id_, f.text, a_offsets, last_a, moved, f.color, include_text=include_text)
+            #elif moved == "<":
+            #    last_b = add_offset(id_, f.text, b_offsets, last_b, moved, f.color, include_text=include_text)
             moved = False
         elif f.type == "-":
             last_a = add_offset(id_, f.text, a_offsets, last_a, f.type, f.color, include_text=include_text)
         elif f.type == "+":
             last_b = add_offset(id_, f.text, b_offsets, last_b, f.type, f.color, include_text=include_text)
         elif f.type == "(>":
-            moved = ">"
+            moved = ">"        # text_b!
         elif f.type == "(<":
-            moved = "<"
-        elif f.type == ">":
+            moved = "<"        # text_b!
+        elif f.type in "><":   # text_a
             last_a = add_offset(id_, f.text, a_offsets, last_a, f.type, f.color, include_text=include_text)
-        elif f.type == "<":
-            last_b = add_offset(id_, f.text, b_offsets, last_b, f.type, f.color, include_text=include_text)
+##        elif f.type == ">":
+##            last_a = add_offset(id_, f.text, a_offsets, last_a, f.type, f.color, include_text=include_text)
+##        elif f.type == "<":
+##            last_b = add_offset(id_, f.text, b_offsets, last_b, f.type, f.color, include_text=include_text)
 
     return a_offsets, b_offsets
             
@@ -1150,6 +1157,7 @@ def kitab_diff(a, b, config=None, debug=False,
         print("--------------------------")
         for row in b_offsets:
             print(row)
+        print("--------------------------")
 
     # refine the diff to the sub-word level:
     if do_refine:
@@ -1202,8 +1210,6 @@ def kitab_diff(a, b, config=None, debug=False,
         with open(json_outfp, mode="w", encoding="utf-8") as file:
             json.dump(output_d, file, indent=2, ensure_ascii=False)
         print("json version of the diff saved here:", json_outfp)
-
-    print("Done!")
     
     if output_html or html_outfp:
         return a, b, a_offsets, b_offsets, a_html, b_html
@@ -1212,7 +1218,7 @@ def kitab_diff(a, b, config=None, debug=False,
     
     
 if __name__ == "__main__":
-    r = kitab_diff(input_a, input_b, config=None, debug=False, 
+    r = kitab_diff(input_a, input_b, config=None, debug=True, 
                normalize_alif=True, normalize_ya=True,
                normalize_ha=True, remove_punctuation=True, replace_d={},
                include_text=True, min_line_length=float("inf"),
@@ -1225,3 +1231,4 @@ if __name__ == "__main__":
         a, b, a_offsets, b_offsets, a_html, b_html = r
     except:
         a, b, a_offsets, b_offsets = r
+    print("Done!")
