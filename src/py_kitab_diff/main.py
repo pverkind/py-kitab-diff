@@ -126,11 +126,15 @@ input_b = """# (15)
 ~~أنه يخرج من مفاوز وراء أرض الزنج لا تسلك حتى ينتهى الى حد الزنج ويقطع فى
 ~~متصلة مفاوز النوبة وعماراتهم فيجرى لهم فى عمارات الى أن يقع فى أرض مصر،"""
 
-#input_a = "This is the start. I have moved this sentence. Sime tipos! This is the end."
-#input_b = "I have moved this sentence. This was the start. Some typos! Addition... This is the end."
+input_a = "This is the start. I have moved this sentence. Sime tipos! This is the end."
+input_b = "I have moved this sentence. This was the start. Some typos! Addition... This is the end."
 
-input_a = "قله من يدخل الجنه منهن قال ابو عبيده وهذا الوصف في الغربان عزيز لا يكاد يوجد انما ارجلها حمر"
-input_b = "وهذا الوصف في الغربان عزيز لا يكاد يوجد انما ارجلها حمر وصف قله من يدخل الجنه منهن هذا قول"
+#input_a = "قله من يدخل الجنه منهن قال ابو عبيده وهذا الوصف في الغربان عزيز لا يكاد يوجد انما ارجلها حمر"
+#input_b = "وهذا الوصف في الغربان عزيز لا يكاد يوجد انما ارجلها حمر وصف قله من يدخل الجنه منهن هذا قول"
+
+input_a = "غريب الحديث للخطابي ق غريب الحديث للخطابي ق"
+input_b = "غريب الحديث للخطابي مخطوط ق ج ينظر غريب الحديث للخطابي ج"
+
 
 def preprocess(text, normalize_alif=True, normalize_ya=True,
                normalize_ha=True, remove_punctuation=True, replace_d={}):
@@ -414,6 +418,38 @@ def shingle(s, n):
       shingles.append(s[i:i+n])
     return shingles
 
+def refine_closest(a_offsets, b_offsets, a_idx, b_idx,
+                   processed_ids, do_not_delete):
+    """Refine the closest addition/deletion before the specified anchor indexes
+    `a_idx` and `b_idx` that has not yet been processed"""
+    # loop through the a_offsets, backwards from the fragment
+    # before the anchor fragment
+    for i in reversed(range(a_idx)):    
+        if a_offsets[i]["type"] == '-':         # DELETED FRAGMENT IN TEXT A
+            id_a = a_offsets[i]["id"]
+            if id_a in processed_ids:      # don't process fragments twice
+                break
+            # loop through the b_offsets, backwards from the fragment before the anchor fragment:
+            for j in reversed(range(b_idx)):
+                id_b = b_offsets[j]["id"]
+                if id_b in processed_ids:  # don't process fragments twice
+                    break
+                if b_offsets[j]["type"] == '+': # INSERTED FRAGMENT IN TEXT B
+                    # diff the deleted and inserted fragments:
+                    r = secondary_diff(a_offsets, b_offsets, i, j, a_idx, b_idx)
+                    a_offsets, b_offsets = r
+                    # make sure fragments are not processed twice:
+                    processed_ids.add(id_a)
+                    processed_ids.add(id_b)
+                    # fragments that were broken into multiple subfragments
+                    # will be deleted later; 
+                    # do not delete if no shared subfragments were found:
+                    if (not str(a_offsets[-1]["id"]).startswith(f"{id_a}.")) \
+                       or (not str(b_offsets[-1]["id"]).startswith(f"{id_b}.")):
+                        do_not_delete.add(id_a)
+                        do_not_delete.add(id_b)
+                    break
+            break
 
 def refine_anchored(a_offsets, b_offsets, debug=False):
     """Refine the diff by finding shared text
@@ -437,54 +473,64 @@ def refine_anchored(a_offsets, b_offsets, debug=False):
     a_offsets_ids = [d["id"] for d in a_offsets]
     b_offsets_ids_lookup = {d["id"]: i for i, d in enumerate(b_offsets)}
     common_ids = [id_ for id_ in a_offsets_ids if id_ in b_offsets_ids_lookup]
+        
 
     # generate a dictionary to facilitate finding the index of the fragments that are moved in b_offsets:
     b_moved_ids_lookup = {d["moved_id"]: i for i, d in enumerate(b_offsets)}
 
-    # compare the insertions and deletions before common and moved fragments:
     processed_ids = set()
     do_not_delete = set()
-    for a_idx, a_dict in enumerate(a_offsets):
-        # only use common and moved fragments as anchors:
-        if a_dict["id"] in common_ids:   # COMMON FRAGMENT
-            common_id = a_dict["id"]
-            b_idx = b_offsets_ids_lookup[common_id]
-        elif a_dict["moved_id"] != 0:    # MOVED FRAGMENT
-            moved_id = a_dict["moved_id"]
-            b_idx = b_moved_ids_lookup[moved_id]
-        else: 
-            continue
-        
-        # process the closest addition/deletion before the common/moved segment
-        # that has not yet been processed:
-        # (loop through the a_offsets, backwards from the fragment
-        # before the anchor fragment)
-        for i in reversed(range(a_idx)):    
-            if a_offsets[i]["type"] == '-':         # DELETED FRAGMENT IN TEXT A
-                id_a = a_offsets[i]["id"]
-                if id_a in processed_ids:      # don't process fragments twice
-                    break
-                # loop through the b_offsets, backwards from the fragment before the anchor fragment:
-                for j in reversed(range(b_idx)):
-                    id_b = b_offsets[j]["id"]
-                    if id_b in processed_ids:  # don't process fragments twice
-                        break
-                    if b_offsets[j]["type"] == '+': # INSERTED FRAGMENT IN TEXT B
-                        # diff the deleted and inserted fragments:
-                        r = secondary_diff(a_offsets, b_offsets, i, j, a_idx, b_idx)
-                        a_offsets, b_offsets = r
-                        # make sure fragments are not processed twice:
-                        processed_ids.add(id_a)
-                        processed_ids.add(id_b)
-                        # fragments that were broken into multiple subfragments
-                        # will be deleted later; 
-                        # do not delete if no shared subfragments were found:
-                        if (not str(a_offsets[-1]["id"]).startswith(f"{id_a}.")) \
-                           or (not str(b_offsets[-1]["id"]).startswith(f"{id_b}.")):
-                            do_not_delete.add(id_a)
-                            do_not_delete.add(id_b)
-                        break
-                break
+
+    # deal with the case that no common or moved IDs are found at all
+    # => all additions and deletions need to be refined:
+    if not common_ids and len(b_moved_ids_lookup) == 1:
+        refine_closest(a_offsets, b_offsets, len(a_offsets), len(b_offsets),
+                       processed_ids, do_not_delete)
+
+    # compare the insertions and deletions before common and moved fragments:
+    else:
+        for a_idx, a_dict in enumerate(a_offsets):
+            # only use common and moved fragments as anchors:
+            if a_dict["id"] in common_ids:   # COMMON FRAGMENT
+                common_id = a_dict["id"]
+                b_idx = b_offsets_ids_lookup[common_id]
+            elif a_dict["moved_id"] != 0:    # MOVED FRAGMENT
+                moved_id = a_dict["moved_id"]
+                b_idx = b_moved_ids_lookup[moved_id]
+            else: 
+                continue
+            refine_closest(a_offsets, b_offsets, a_idx, b_idx,
+                           processed_ids, do_not_delete)
+##        # process the closest addition/deletion before the common/moved segment
+##        # that has not yet been processed:
+##        # (loop through the a_offsets, backwards from the fragment
+##        # before the anchor fragment)
+##        for i in reversed(range(a_idx)):    
+##            if a_offsets[i]["type"] == '-':         # DELETED FRAGMENT IN TEXT A
+##                id_a = a_offsets[i]["id"]
+##                if id_a in processed_ids:      # don't process fragments twice
+##                    break
+##                # loop through the b_offsets, backwards from the fragment before the anchor fragment:
+##                for j in reversed(range(b_idx)):
+##                    id_b = b_offsets[j]["id"]
+##                    if id_b in processed_ids:  # don't process fragments twice
+##                        break
+##                    if b_offsets[j]["type"] == '+': # INSERTED FRAGMENT IN TEXT B
+##                        # diff the deleted and inserted fragments:
+##                        r = secondary_diff(a_offsets, b_offsets, i, j, a_idx, b_idx)
+##                        a_offsets, b_offsets = r
+##                        # make sure fragments are not processed twice:
+##                        processed_ids.add(id_a)
+##                        processed_ids.add(id_b)
+##                        # fragments that were broken into multiple subfragments
+##                        # will be deleted later; 
+##                        # do not delete if no shared subfragments were found:
+##                        if (not str(a_offsets[-1]["id"]).startswith(f"{id_a}.")) \
+##                           or (not str(b_offsets[-1]["id"]).startswith(f"{id_b}.")):
+##                            do_not_delete.add(id_a)
+##                            do_not_delete.add(id_b)
+##                        break
+##                break
 
     # TODO: check unprocessed additions and deletions
     if debug:
@@ -794,15 +840,19 @@ def parse_wikEdDiff(fragments, include_text=True, debug=False):
     The WikEdDiff.diff function generates is a list of fragment objects,
     each of which has three attributes:
       - fragment.text: the string content of the fragment
+      - fragment.color: an integer (0 for non-moved fragments, unique number higher than 0
+          for pairs of moved fragments. The idea is that a list of colors can be used
+          to highlight each moved fragment in a different color)
       - fagment.type: a symbol that represents whether the fragment
+        - is the start (`{` and `[`) or end (`}` and `}`) of one of the strings
         - is shared between both (not moved):   `=`
         - is shared between both (moved):       `>` or `<`
         - is only in the first:                 `-`
         - is only in the second:                `+`
-        - is the start (`{` and `[`) or end (`}` and `}`) of one of the strings
-      - fragment.color: an integer (0 for non-moved fragments, unique number higher than 0
-          for pairs of moved fragments. The idea is that a list of colors can be used
-          to highlight each moved fragment in a different color)
+        - is the start of a moved group         `(<` or `(>`
+        - is the end of a moved group           `)`
+    NB: the logic of the moved groups is not so clear;
+        they usually 
 
     parse_wikEdDiff produces two lists of fragment dictionaries, one for each input text.
     Each fragment dictionary has the following keys:
@@ -834,35 +884,54 @@ def parse_wikEdDiff(fragments, include_text=True, debug=False):
     b_offsets = []
     last_b = 0
     moved = False
+    moved_ids = dict()
     for id_, f in enumerate(fragments):
         if debug:
-            print(id_, f.type, f.color, repr(f.text))
-        if f.type == "=":
-            if not moved:
-                last_a = add_offset(id_, f.text, a_offsets, last_a, f.type, f.color, include_text=include_text)
-                last_b = add_offset(id_, f.text, b_offsets, last_b, f.type, f.color, include_text=include_text)
-            elif moved in "><":
-                last_b = add_offset(id_, f.text, b_offsets, last_b, moved, f.color, include_text=include_text)
-            #elif moved == ">":
-            #    last_a = add_offset(id_, f.text, a_offsets, last_a, moved, f.color, include_text=include_text)
-            #elif moved == "<":
-            #    last_b = add_offset(id_, f.text, b_offsets, last_b, moved, f.color, include_text=include_text)
+            print(id_, repr(f.type), f.color, repr(f.text))
+        t = f.type.strip()
+        # skip structural wrappers for the two texts
+        if t in "{[}]":
+            pass
+        # first check for moved block markers:
+        elif t == "(>":
+            moved = ">"
+        elif t == "(<":
+            moved = "<"
+        elif t == ")":
             moved = False
-        elif f.type == "-":
-            last_a = add_offset(id_, f.text, a_offsets, last_a, f.type, f.color, include_text=include_text)
-        elif f.type == "+":
-            last_b = add_offset(id_, f.text, b_offsets, last_b, f.type, f.color, include_text=include_text)
-        elif f.type == "(>":
-            moved = ">"        # text_b!
-        elif f.type == "(<":
-            moved = "<"        # text_b!
-        elif f.type in "><":   # text_a
-            last_a = add_offset(id_, f.text, a_offsets, last_a, f.type, f.color, include_text=include_text)
-##        elif f.type == ">":
-##            last_a = add_offset(id_, f.text, a_offsets, last_a, f.type, f.color, include_text=include_text)
-##        elif f.type == "<":
-##            last_b = add_offset(id_, f.text, b_offsets, last_b, f.type, f.color, include_text=include_text)
-
+        else:
+            if moved:
+                if t == "=":     # moved common text
+                    last_b = add_offset(id_, f.text, b_offsets, last_b,
+                                        moved, f.color, include_text=include_text)
+                elif t == "+":   # moved inserted text = moved + changed
+                    last_b = add_offset(id_, f.text, b_offsets, last_b,
+                                        "+", f.color, include_text=include_text)
+                elif t == "-":   # deletion relative to the moved counterpart:
+                                 # do not advance text_a here:
+                                 # instead insert at standalone "<" or ">"
+                    moved_ids[f.color] = t
+            else:
+                if t == "=":
+                    last_a = add_offset(id_, f.text, a_offsets, last_a, "=",
+                                        f.color, include_text=include_text)
+                    last_b = add_offset(id_, f.text, b_offsets, last_b, "=",
+                                        f.color, include_text=include_text)
+                elif t == "+":
+                    last_b = add_offset(id_, f.text, b_offsets, last_b, "+",
+                                        f.color, include_text=include_text)
+                elif t == "-":
+                    last_a = add_offset(id_, f.text, a_offsets, last_a, "-",
+                                        f.color, include_text=include_text)
+                elif t in "><":   # standalone fragment: a-side text
+                    if f.color in moved_ids:
+                        sign = moved_ids[f.color]
+                        moved_id = 0
+                    else:
+                        sign = t
+                        moved_id = f.color
+                    last_a = add_offset(id_, f.text, a_offsets, last_a, sign,
+                                        moved_id, include_text=include_text)
     return a_offsets, b_offsets
             
 def offsets2html(a_offsets, b_offsets, highlight_common=False, outfp=None):
@@ -885,8 +954,6 @@ def offsets2html(a_offsets, b_offsets, highlight_common=False, outfp=None):
     else:
         text_align = "left"
         direction = "ltr"
-    print(text_align)
-    print(direction)
     moved_color = "lightgoldenrodyellow"
     if highlight_common:
         add_color = "white"
@@ -1142,11 +1209,6 @@ def kitab_diff(a, b, config=None, debug=False,
     a_offsets, b_offsets = r
 
     if debug:
-        fn = "diff_before_refining.html"
-        offsets2html(a_offsets, b_offsets, outfp=fn,
-                     highlight_common=highlight_common)
-        print("html version of diff before refining saved here:", fn)
-        
         print("--------------------------")
         print("A OFFSETS BEFORE REFINING:")
         print("--------------------------")
@@ -1158,6 +1220,11 @@ def kitab_diff(a, b, config=None, debug=False,
         for row in b_offsets:
             print(row)
         print("--------------------------")
+        
+        fn = "diff_before_refining.html"
+        offsets2html(a_offsets, b_offsets, outfp=fn,
+                     highlight_common=highlight_common)
+        print("html version of diff before refining saved here:", fn)
 
     # refine the diff to the sub-word level:
     if do_refine:
@@ -1218,13 +1285,13 @@ def kitab_diff(a, b, config=None, debug=False,
     
     
 if __name__ == "__main__":
-    r = kitab_diff(input_a, input_b, config=None, debug=True, 
+    r = kitab_diff(input_a, input_b, config=None, debug=False, 
                normalize_alif=True, normalize_ya=True,
                normalize_ha=True, remove_punctuation=True, replace_d={},
                include_text=True, min_line_length=float("inf"),
                do_refine=True, refine_n=3, stopwords=ARA_STOPWORDS,
                do_simplify=True, min_tag_chars=MIN_TAG_CHARS,
-               output_html=False, html_outfp=None,
+               output_html=True, html_outfp=None,
                highlight_common=False, json_outfp=None,
                offset_format="list_of_dictionaries")
     try:
