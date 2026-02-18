@@ -4,3 +4,4 @@ __pycache__/
 *.json
 old/
 output/
+src/py_kitab_diff.egg-info/
