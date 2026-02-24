@@ -980,12 +980,13 @@ def offsets2html(a_offsets, b_offsets, highlight_common=False, outfp=None):
 <body>
     <div>
         <label>
+            Highlight 
             <input type="radio" name="highlightMode" value="different" checked>
-            Highlight different text
+            different text
         </label>
         <label>
             <input type="radio" name="highlightMode" value="common">
-            Highlight common text
+            common text
         </label>
     </div>
 
@@ -1338,7 +1339,7 @@ def kitab_diff(a, b, config=None, debug=False,
     
     
 if __name__ == "__main__":
-    input_b = input_a
+    input_b = input_a[:-10]
     r = kitab_diff(input_a, input_b, config=None, debug=True, 
                normalize_alif=True, normalize_ya=True,
                normalize_ha=True, remove_punctuation=True, replace_d={},
