@@ -317,7 +317,7 @@ def split_lines(text_a, text_b, a_offsets, b_offsets,
         b_dict["end"] += n_lines * len(line_tag)
         new_text_b += b_dict["text"]
     
-    print("Divided the diff into", n_lines, "lines to improve readability")
+    #print("Divided the diff into", n_lines, "lines to improve readability")
     return new_text_a, new_text_b, a_offsets, b_offsets
 
 
@@ -978,6 +978,20 @@ def offsets2html(a_offsets, b_offsets, highlight_common=False, outfp=None):
     </style>
 </head>
 <body>
+    <div>
+        <label>
+            <input type="radio" name="highlightMode" value="different" checked>
+            Highlight different text
+        </label>
+        <label>
+            <input type="radio" name="highlightMode" value="common">
+            Highlight common text
+        </label>
+    </div>
+
+    <br>
+
+
     <table>
         <tr>
             <td>text_a</td>
@@ -988,6 +1002,41 @@ def offsets2html(a_offsets, b_offsets, highlight_common=False, outfp=None):
             <td>%s</td>
         </tr>
     </table>
+    <script>
+        function updateHighlight(mode) {{
+            // Reset all highlights first
+            document.querySelectorAll('.add, .del, .common').forEach(el => {{
+                el.style.backgroundColor = '';
+            }});
+
+            // Always highlight moved text
+            document.querySelectorAll('.moved').forEach(el => {{
+                el.style.backgroundColor = 'lightgoldenrod';
+            }});
+
+            if (mode === 'different') {{
+                document.querySelectorAll('.add, .del').forEach(el => {{
+                    el.style.backgroundColor = 'lightgreen';
+                }});
+            }} else if (mode === 'common') {{
+                document.querySelectorAll('.common').forEach(el => {{
+                    el.style.backgroundColor = 'lightgreen';
+                }});
+            }}
+        }}
+
+        // Attach listeners
+        document.querySelectorAll('input[name="highlightMode"]').forEach(radio => {{
+            radio.addEventListener('change', function() {{
+                updateHighlight(this.value);
+            }});
+        }});
+
+        // Initialize on page load
+        window.addEventListener('DOMContentLoaded', function() {{
+            updateHighlight(document.querySelector('input[name="highlightMode"]:checked').value);
+        }});
+    </script>
 </body>
 </html>"""
     class_map = {"=": "common", "+": "add", "-": "del", ">": "moved", "<": "moved"}
@@ -1173,6 +1222,23 @@ def kitab_diff(a, b, config=None, debug=False,
                    normalize_ha=normalize_ha, remove_punctuation=remove_punctuation,
                    replace_d=replace_d)
 
+    if a == b:
+        offsets = [{
+            "id": "1",
+            "start": 0,
+            "end": len(a),
+            "type": "=",
+            "moved_id": "0",
+            "common_id": "1"
+        }]
+        if include_text:
+            offsets[0]["text"] = a
+        if output_html or html_outfp:
+            a_html, b_html = offsets2html(offsets, offsets, outfp=html_outfp,
+                                      highlight_common=highlight_common)
+            return a, b, offsets, offsets, a_html, b_html
+        else:
+            return a, b, offsets, offsets
     
     # create an instance of the WikEdDiff class
     if not config:
@@ -1272,6 +1338,7 @@ def kitab_diff(a, b, config=None, debug=False,
     
     
 if __name__ == "__main__":
+    input_b = input_a
     r = kitab_diff(input_a, input_b, config=None, debug=True, 
                normalize_alif=True, normalize_ya=True,
                normalize_ha=True, remove_punctuation=True, replace_d={},
