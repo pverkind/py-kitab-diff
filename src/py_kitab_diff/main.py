@@ -1165,6 +1165,7 @@ def kitab_diff(a, b, config=None, debug=False,
                normalize_alif=True, normalize_ya=True,
                normalize_ha=True, remove_punctuation=True, replace_d={},
                include_text=True, min_line_length=float("inf"),
+               line_tag="<br/>",
                do_refine=True, refine_n=3, stopwords=ARA_STOPWORDS,
                do_simplify=True, min_tag_chars=MIN_TAG_CHARS,
                output_html=False, html_outfp=None,
@@ -1204,6 +1205,8 @@ def kitab_diff(a, b, config=None, debug=False,
         min_line_length (int): split the output into lines
             with a minimum number of characters, for easier comparison of texts.
             Defaults to `float("inf")`: do not split into rows.
+        line_tag (str): tag to be insterted to mark a new line.
+            Defaults to "<br/>"
         output_html (bool): if True, a html representation of the diff will be generated
         html_outfp (str): path to the output html file. Defaults to None
             (a temporary file will open)
@@ -1305,7 +1308,7 @@ def kitab_diff(a, b, config=None, debug=False,
     # add lines to make the diff more readabl:
     if min_line_length < float("inf"):
         r = split_lines(a, b, a_offsets, b_offsets,
-                        min_line_length=min_line_length)
+                        min_line_length=min_line_length, line_tag=line_tag)
         a, b, a_offsets, b_offsets = r
 
     # generate a quick test html:
@@ -1339,11 +1342,11 @@ def kitab_diff(a, b, config=None, debug=False,
     
     
 if __name__ == "__main__":
-    input_b = input_a[:-10]
-    r = kitab_diff(input_a, input_b, config=None, debug=True, 
+    #input_b = input_a[:-10]
+    r = kitab_diff(input_a, input_b, config=None, debug=False, 
                normalize_alif=True, normalize_ya=True,
                normalize_ha=True, remove_punctuation=True, replace_d={},
-               include_text=True, min_line_length=float("inf"),
+               include_text=True, min_line_length=20,
                do_refine=True, refine_n=3, stopwords=ARA_STOPWORDS,
                do_simplify=True, min_tag_chars=MIN_TAG_CHARS,
                output_html=True, html_outfp=None,
@@ -1351,6 +1354,7 @@ if __name__ == "__main__":
                offset_format="list_of_dictionaries")
     try:
         a, b, a_offsets, b_offsets, a_html, b_html = r
+        print(a)
     except:
         a, b, a_offsets, b_offsets = r
     print("Done!")
